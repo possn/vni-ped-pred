@@ -1,0 +1,523 @@
+/* VNI Pediátrica — Predição Precoce
+   - Regras transparentes (não-ML) baseadas em marcadores publicados.
+   - Dados ficam localmente (localStorage).
+*/
+'use strict';
+
+const LS_KEY = "vni_pred_v1";
+const LS_PWA = "vni_pred_pwa_enabled";
+const LS_BASE = "vni_pred_baseurl";
+
+const $ = (id) => document.getElementById(id);
+
+const views = ["calc","result","evidence","settings"];
+
+function setRoute(route){
+  views.forEach(v=>{
+    const el = $(`view-${v}`);
+    if(!el) return;
+    el.classList.toggle("hidden", v !== route);
+  });
+
+  document.querySelectorAll(".navitem").forEach(b=>{
+    b.classList.toggle("active", b.dataset.route === route);
+  });
+  document.querySelectorAll(".tab").forEach(b=>{
+    b.classList.toggle("active", b.dataset.route === route);
+  });
+}
+
+function safeNum(x){
+  if(x === null || x === undefined) return null;
+  const s = String(x).trim().replace(",",".");
+  if(!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+function clamp(n, a, b){
+  return Math.max(a, Math.min(b, n));
+}
+
+function toMonths(ageValue, unit){
+  const v = safeNum(ageValue);
+  if(v === null) return null;
+  if(unit === "days") return v / 30.4375;
+  if(unit === "years") return v * 12;
+  return v;
+}
+
+function calcSF(spo2, fio2){
+  const s = safeNum(spo2);
+  const f = safeNum(fio2);
+  if(s === null || f === null || f <= 0) return null;
+  return s / f;
+}
+
+function pctChange(newV, oldV){
+  const a = safeNum(newV), b = safeNum(oldV);
+  if(a === null || b === null || b === 0) return null;
+  return (a - b) / b * 100;
+}
+
+/* ---- RISK MODEL (transparent rules) ----
+   Core evidence:
+   - SF at 1h cutoff ~193 for early NIV failure (≤6h). Mayordomo-Colunga 2013.
+   - Lower RR decrease at 1h and 6h associated with failure. Mayordomo-Colunga 2009/2013.
+   - Age <6 months, SF, HR and IPAP at 2h independent predictors (Pons-Òdena 2019).
+   - High initial FiO2 / low SF / lack of improvement in tachypnea (Baker 2021).
+*/
+function computeRisk(d){
+  const out = {
+    sf0: null, sf1: null,
+    drrPct: null, dhrPct: null, dpco2: null,
+    score: 0,
+    tier: "—",
+    badge: "—",
+    explain: "",
+    actions: [],
+    summary: ""
+  };
+
+  // red flags => immediate very high
+  const redFlags = [
+    d.rfHemodyn, d.rfGcs, d.rfSecretions, d.rfApnea, d.rfPtx
+  ].some(Boolean);
+
+  // derived
+  out.sf0 = calcSF(d.spo2_0, d.fio2_0);
+  out.sf1 = calcSF(d.spo2_1, d.fio2_1);
+
+  out.drrPct = (safeNum(d.rr_1) !== null && safeNum(d.rr_0) !== null) ? pctChange(d.rr_1, d.rr_0) : null;
+  out.dhrPct = (safeNum(d.hr_1) !== null && safeNum(d.hr_0) !== null) ? pctChange(d.hr_1, d.hr_0) : null;
+
+  const pco2_0 = safeNum(d.pco2_0), pco2_1 = safeNum(d.pco2_1);
+  if(pco2_0 !== null && pco2_1 !== null){
+    out.dpco2 = pco2_1 - pco2_0; // negative is improvement
+  }
+
+  const ageM = toMonths(d.ageValue, d.ageUnit);
+
+  // score components (0–100)
+  let score = 0;
+
+  // 1) SF at 1–2 h (heavy weight)
+  if(out.sf1 !== null){
+    if(out.sf1 < 150) score += 40;
+    else if(out.sf1 < 193) score += 30;        // evidence-driven threshold
+    else if(out.sf1 < 220) score += 18;
+    else if(out.sf1 < 260) score += 10;
+    else score += 3;
+  } else {
+    score += 10; // unknown => conservative
+  }
+
+  // 2) Change in RR (expect decrease)
+  // note: drrPct is (new-old)/old, so negative is improvement
+  if(out.drrPct !== null){
+    if(out.drrPct >= 0) score += 18;           // no improvement/worse
+    else if(out.drrPct > -10) score += 12;     // <10% drop
+    else if(out.drrPct > -20) score += 7;
+    else score += 2;
+  } else {
+    score += 6;
+  }
+
+  // 3) Change in HR (supportive)
+  if(out.dhrPct !== null){
+    if(out.dhrPct >= 0) score += 10;
+    else if(out.dhrPct > -5) score += 7;
+    else if(out.dhrPct > -10) score += 4;
+    else score += 1;
+  } else {
+    score += 3;
+  }
+
+  // 4) Age risk
+  if(ageM !== null){
+    if(ageM < 6) score += 10;        // Pons-Òdena 2019; synchrony issues etc.
+    else if(ageM < 12) score += 6;
+    else score += 2;
+  } else {
+    score += 4;
+  }
+
+  // 5) ARF type / diagnosis
+  if(d.arfType === "type1") score += 10; // Mayordomo 2009: type1 higher failure odds
+  if(d.diag === "ards") score += 12;
+  else if(d.diag === "pneumonia") score += 8;
+
+  // 6) FiO2 at initiation (proxy severity)
+  const fio2_0 = safeNum(d.fio2_0);
+  if(fio2_0 !== null){
+    if(fio2_0 >= 0.8) score += 8;
+    else if(fio2_0 >= 0.6) score += 5;
+    else if(fio2_0 >= 0.4) score += 3;
+    else score += 1;
+  }
+
+  // 7) PRISM (optional)
+  const prism = safeNum(d.prism);
+  if(prism !== null){
+    if(prism >= 10) score += 10;
+    else if(prism >= 5) score += 6;
+    else if(prism >= 1) score += 3;
+  }
+
+  // 8) IPAP at 1–2 h (optional; higher IPAP early associated with failure in one study)
+  const ipap = safeNum(d.ipap_1);
+  if(ipap !== null){
+    if(ipap >= 18) score += 6;
+    else if(ipap >= 14) score += 3;
+  }
+
+  // 9) pCO2 / pH trend (supportive, not always available)
+  const ph0 = safeNum(d.ph_0), ph1 = safeNum(d.ph_1);
+  if(out.dpco2 !== null){
+    if(out.dpco2 >= 5) score += 6;       // CO2 rising
+    else if(out.dpco2 >= 0) score += 3;  // not improving
+    else score += 1;
+  }
+  if(ph0 !== null && ph1 !== null){
+    if(ph1 < ph0 - 0.02) score += 4;     // worsening acidosis
+    else if(ph1 < ph0 + 0.01) score += 2;
+  }
+
+  // red flags override
+  if(redFlags) score = Math.max(score, 85);
+
+  out.score = clamp(Math.round(score), 0, 100);
+
+  // tiering (heuristic)
+  if(out.score >= 85){
+    out.tier = "Muito alto";
+    out.badge = "ALTO RISCO";
+  } else if(out.score >= 65){
+    out.tier = "Alto";
+    out.badge = "RISCO ↑";
+  } else if(out.score >= 45){
+    out.tier = "Intermédio";
+    out.badge = "RISCO ↔";
+  } else {
+    out.tier = "Baixo";
+    out.badge = "RISCO ↓";
+  }
+
+  // explanations + actions
+  const notes = [];
+  if(redFlags) notes.push("Há red flags clínicas assinaladas (isto pesa mais do que qualquer score).");
+
+  if(out.sf1 !== null && out.sf1 < 193){
+    notes.push(`SF a 1–2 h < 193 (SF=${out.sf1.toFixed(0)}): marcador de alto risco de falência precoce em coorte pediátrica.`);
+  }
+  if(out.drrPct !== null && out.drrPct > -10){
+    notes.push("Redução de FR < 10% (ou pior): resposta precoce fraca está associada a falência em estudos prospetivos.");
+  }
+  if(ageM !== null && ageM < 6){
+    notes.push("Idade < 6 meses: maior risco de falência (sincronia/leaks, gravidade).");
+  }
+  if(d.arfType === "type1") notes.push("IRA hipoxémica (tipo 1): maior risco de falência vs. tipo 2 em coorte pediátrica.");
+  if(d.diag === "ards") notes.push("ARDS: associada a maiores taxas de falência.");
+  if(prism !== null && prism >= 5) notes.push("PRISM elevado associa-se a falência em várias coortes.");
+
+  out.explain = notes.length ? notes.join(" ") : "Sem sinais fortes de alto risco com os dados fornecidos."
+
+  // action suggestions (generic, non-prescriptive)
+  const actions = [];
+  if(out.score >= 65 || redFlags){
+    actions.push("Monitorização contínua e reavaliação frequente (ex: 15–30 min), com plano explícito de escalada.");
+    actions.push("Verificar interface/leaks, sincronização, conforto; optimizar IPAP/EPAP conforme objetivo (oxigenação vs ventilação) e tolerância.");
+    actions.push("Reavaliar causa reversível e terapêutica específica (broncoespasmo, secreções, fluidos, antibiótico, etc.).");
+    actions.push("Considerar precocemente equipa e logística de intubação, sobretudo se SF < 193 a 1–2 h ou deterioração clínica.");
+  } else if(out.score >= 45){
+    actions.push("Reavaliar resposta nas próximas 30–60 min; confirmar tendência de FR/FC e SF.");
+    actions.push("Optimizar interface e parâmetros; documentar critérios de falência e gatilhos de escalada.");
+  } else {
+    actions.push("Manter VNI com vigilância e reavaliação seriada; confirmar melhoria sustentada de FR/FC e SF.");
+  }
+
+  // additional explicit SF suggestion from Mayordomo 2013 discussion
+  if(out.sf1 !== null && out.sf1 < 193){
+    actions.push("Se não atingir SF ~190 após 1 h de VNI, a necessidade de intubação deve ser ponderada no contexto clínico global.");
+  }
+
+  out.actions = actions;
+
+  // summary
+  const lines = [];
+  lines.push("VNI Pediátrica — Predição precoce (apoio à decisão)");
+  lines.push(`Idade: ${ageM !== null ? ageM.toFixed(1) : "?"} meses | IRA: ${d.arfType==="type1"?"Hipoxémica (tipo 1)":"Hipercápnica/hipoventilação (tipo 2)"} | Dx: ${d.diag}`);
+  if(prism !== null) lines.push(`PRISM III-24: ${prism}`);
+  lines.push(`SF0: ${out.sf0!==null?out.sf0.toFixed(0):"—"} | SF1-2h: ${out.sf1!==null?out.sf1.toFixed(0):"—"} | ΔFR: ${out.drrPct!==null?out.drrPct.toFixed(0)+"%":"—"} | ΔFC: ${out.dhrPct!==null?out.dhrPct.toFixed(0)+"%":"—"}`);
+  if(out.dpco2 !== null) lines.push(`ΔpCO2: ${out.dpco2>0?"+":""}${out.dpco2.toFixed(0)} mmHg`);
+  lines.push(`Score: ${out.score}/100 | Tier: ${out.tier}`);
+  if(redFlags) lines.push("Red flags: SIM");
+  out.summary = lines.join("\n");
+
+  return out;
+}
+
+/* ---- UI + state ---- */
+function gather(){
+  return {
+    ageValue: $("ageValue").value,
+    ageUnit: $("ageUnit").value,
+    arfType: $("arfType").value,
+    diag: $("diag").value,
+    prism: $("prism").value,
+
+    rfHemodyn: $("rfHemodyn").checked,
+    rfGcs: $("rfGcs").checked,
+    rfSecretions: $("rfSecretions").checked,
+    rfApnea: $("rfApnea").checked,
+    rfPtx: $("rfPtx").checked,
+
+    spo2_0: $("spo2_0").value,
+    fio2_0: $("fio2_0").value,
+    rr_0: $("rr_0").value,
+    hr_0: $("hr_0").value,
+    ph_0: $("ph_0").value,
+    pco2_0: $("pco2_0").value,
+
+    spo2_1: $("spo2_1").value,
+    fio2_1: $("fio2_1").value,
+    rr_1: $("rr_1").value,
+    hr_1: $("hr_1").value,
+    ipap_1: $("ipap_1").value,
+    ph_1: $("ph_1").value,
+    pco2_1: $("pco2_1").value,
+  };
+}
+
+function fill(d){
+  $("ageValue").value = d.ageValue ?? "";
+  $("ageUnit").value = d.ageUnit ?? "months";
+  $("arfType").value = d.arfType ?? "type2";
+  $("diag").value = d.diag ?? "bronchiolitis";
+  $("prism").value = d.prism ?? "";
+
+  $("rfHemodyn").checked = !!d.rfHemodyn;
+  $("rfGcs").checked = !!d.rfGcs;
+  $("rfSecretions").checked = !!d.rfSecretions;
+  $("rfApnea").checked = !!d.rfApnea;
+  $("rfPtx").checked = !!d.rfPtx;
+
+  ["spo2_0","fio2_0","rr_0","hr_0","ph_0","pco2_0","spo2_1","fio2_1","rr_1","hr_1","ipap_1","ph_1","pco2_1"].forEach(k=>{
+    $(k).value = d[k] ?? "";
+  });
+
+  updateAgeHint();
+}
+
+function save(d){
+  localStorage.setItem(LS_KEY, JSON.stringify({ ...d, savedAt: new Date().toISOString() }));
+}
+
+function load(){
+  const raw = localStorage.getItem(LS_KEY);
+  if(!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+function resetForm(){
+  localStorage.removeItem(LS_KEY);
+  fill({});
+}
+
+function updateAgeHint(){
+  const m = toMonths($("ageValue").value, $("ageUnit").value);
+  $("ageMonthsHint").textContent = m===null ? "= — meses" : `= ${m.toFixed(1)} meses`;
+}
+
+function renderResult(r, d){
+  $("sf0").textContent = r.sf0===null ? "—" : r.sf0.toFixed(0);
+  $("sf1").textContent = r.sf1===null ? "—" : r.sf1.toFixed(0);
+
+  $("drr").textContent = r.drrPct===null ? "—" : `${r.drrPct.toFixed(0)}%`;
+  $("dhr").textContent = r.dhrPct===null ? "—" : `${r.dhrPct.toFixed(0)}%`;
+
+  if(r.dpco2 === null) $("dpco2").textContent = "—";
+  else $("dpco2").textContent = `${r.dpco2>0?"+":""}${r.dpco2.toFixed(0)} mmHg`;
+
+  $("score").textContent = `${r.score}/100`;
+
+  $("riskBadge").textContent = r.badge;
+  $("riskLabel").textContent = r.tier;
+  $("riskExplain").textContent = r.explain;
+
+  // style badge by tier
+  const badge = $("riskBadge");
+  badge.style.borderColor = "rgba(255,255,255,.08)";
+  badge.style.background = "rgba(255,255,255,.06)";
+  if(r.tier === "Muito alto"){
+    badge.style.borderColor = "rgba(239,68,68,.45)";
+    badge.style.background = "rgba(239,68,68,.12)";
+  } else if(r.tier === "Alto"){
+    badge.style.borderColor = "rgba(245,158,11,.45)";
+    badge.style.background = "rgba(245,158,11,.12)";
+  } else if(r.tier === "Intermédio"){
+    badge.style.borderColor = "rgba(59,130,246,.45)";
+    badge.style.background = "rgba(59,130,246,.12)";
+  } else if(r.tier === "Baixo"){
+    badge.style.borderColor = "rgba(34,197,94,.45)";
+    badge.style.background = "rgba(34,197,94,.10)";
+  }
+
+  const ul = $("actionsList");
+  ul.innerHTML = "";
+  r.actions.forEach(a=>{
+    const li = document.createElement("li");
+    li.textContent = a;
+    ul.appendChild(li);
+  });
+
+  $("summary").textContent = r.summary;
+}
+
+function exportJSON(){
+  const d = gather();
+  const payload = { ...d, exportedAt: new Date().toISOString(), app: "vni_pred_v1" };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `vni_pred_${new Date().toISOString().slice(0,19).replaceAll(":","-")}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function importJSON(file){
+  const reader = new FileReader();
+  reader.onload = () => {
+    try{
+      const obj = JSON.parse(String(reader.result || "{}"));
+      fill(obj);
+      save(gather());
+      setPill("Importado.", true);
+    }catch{
+      alert("JSON inválido.");
+    }
+  };
+  reader.readAsText(file);
+}
+
+async function copySummary(){
+  const txt = $("summary").textContent || "";
+  try{
+    await navigator.clipboard.writeText(txt);
+    setPill("Resumo copiado.", true);
+  }catch{
+    alert("Não foi possível copiar automaticamente (permissões do browser).");
+  }
+}
+
+/* ---- PWA ---- */
+function setPill(text, ok){
+  const pill = $("pillStatus");
+  pill.textContent = text;
+  pill.style.borderColor = ok ? "rgba(34,197,94,.35)" : "rgba(255,255,255,.08)";
+  pill.style.background = ok ? "rgba(34,197,94,.10)" : "rgba(255,255,255,.03)";
+}
+
+async function enableSW(enable){
+  if(!("serviceWorker" in navigator)){
+    setPill("Service Worker não suportado.", false);
+    return;
+  }
+  if(!enable){
+    // unregister all
+    const regs = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(regs.map(r=>r.unregister()));
+    localStorage.setItem(LS_PWA, "0");
+    setPill("Offline desactivado.", true);
+    return;
+  }
+  try{
+    await navigator.serviceWorker.register("sw.js");
+    localStorage.setItem(LS_PWA, "1");
+    setPill("Offline activo.", true);
+  }catch(e){
+    console.error(e);
+    setPill("Falha ao activar offline.", false);
+  }
+}
+
+/* ---- base url support for GH Pages subpath ---- */
+function applyBase(){
+  const base = $("baseUrl").value.trim();
+  localStorage.setItem(LS_BASE, base);
+  // update manifest start_url/scope dynamically by rewriting link via query param
+  // (simple approach: just inform; actual manifest file remains. In GH Pages, keep manifest start_url relative.)
+  setPill("Base guardada. Confirma manifest/scope se necessário.", true);
+}
+
+/* ---- init ---- */
+function initNav(){
+  document.querySelectorAll("[data-route]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      setRoute(btn.dataset.route);
+    });
+  });
+}
+
+function initActions(){
+  $("btnCalc").addEventListener("click", ()=>{
+    const d = gather();
+    save(d);
+    const r = computeRisk(d);
+    renderResult(r, d);
+    setRoute("result");
+  });
+
+  $("btnReset").addEventListener("click", ()=>{
+    if(confirm("Repor formulário e apagar dados locais?")){
+      resetForm();
+      setPill("Dados limpos.", true);
+      setRoute("calc");
+    }
+  });
+
+  $("btnExport").addEventListener("click", exportJSON);
+  $("btnImport").addEventListener("click", ()=> $("fileImport").click());
+  $("fileImport").addEventListener("change", (e)=>{
+    const f = e.target.files && e.target.files[0];
+    if(f) importJSON(f);
+    e.target.value = "";
+  });
+
+  $("btnCopy").addEventListener("click", copySummary);
+
+  $("ageValue").addEventListener("input", updateAgeHint);
+  $("ageUnit").addEventListener("change", updateAgeHint);
+
+  $("btnApplyBase").addEventListener("click", applyBase);
+
+  $("togglePwa").addEventListener("change", (e)=>{
+    enableSW(e.target.checked);
+  });
+}
+
+function init(){
+  initNav();
+  initActions();
+
+  const saved = load();
+  if(saved) fill(saved);
+  else fill({});
+
+  // pwa toggle state
+  const pwaEnabled = localStorage.getItem(LS_PWA) === "1";
+  $("togglePwa").checked = pwaEnabled;
+  if(pwaEnabled) enableSW(true);
+  else setPill("Offline desactivado.", true);
+
+  // base url
+  const base = localStorage.getItem(LS_BASE) || "";
+  $("baseUrl").value = base;
+
+  setRoute("calc");
+}
+
+document.addEventListener("DOMContentLoaded", init);

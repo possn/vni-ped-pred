@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1220" />
+  <title>VNI Pediátrica — Predição Precoce</title>
+  <meta name="description" content="Ferramenta clínica (educacional) para estimar risco precoce de falência da VNI em insuficiência respiratória aguda pediátrica, com base em marcadores publicados." />
+
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="VNI Pred">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img class="logoimg" src="icons/icon-192.png" alt="" />
+      <div>
+        <div class="title">VNI Pediátrica — Predição Precoce</div>
+        <div class="subtitle" id="subtitle">Risco de falência nas primeiras horas (apoio à decisão)</div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn ghost" id="btnExport" title="Exportar dados">Exportar</button>
+      <button class="btn ghost" id="btnImport" title="Importar dados">Importar</button>
+      <input type="file" id="fileImport" accept="application/json" hidden />
+      <button class="btn ghost" id="btnReset" title="Repor formulário">Repor</button>
+      <button class="btn" id="btnCalc" title="Calcular risco">Calcular</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <nav class="sidebar" aria-label="Navegação">
+      <button class="navitem active" data-route="calc">Calculadora</button>
+      <button class="navitem" data-route="result">Resultado</button>
+      <button class="navitem" data-route="evidence">Evidência</button>
+      <button class="navitem" data-route="settings">Definições</button>
+
+      <div class="navfooter">
+        <div class="pill" id="pillStatus">Offline: a inicializar…</div>
+      </div>
+    </nav>
+
+    <section class="content">
+      <!-- CALC -->
+      <section class="view" id="view-calc">
+        <div class="grid2">
+          <div class="card">
+            <h2>1) Contexto clínico</h2>
+
+            <div class="row">
+              <label class="label" for="ageMonths">Idade</label>
+              <div class="inline">
+                <input class="input sm" id="ageValue" inputmode="numeric" placeholder="ex: 8" />
+                <select class="input sm" id="ageUnit">
+                  <option value="months" selected>meses</option>
+                  <option value="days">dias</option>
+                  <option value="years">anos</option>
+                </select>
+                <div class="muted small" id="ageMonthsHint">= — meses</div>
+              </div>
+            </div>
+
+            <div class="row">
+              <label class="label" for="arfType">Tipo de IRA</label>
+              <select class="input" id="arfType">
+                <option value="type2" selected>Predominantemente hipoventilação / hipercápnica (ex: bronquiolite, asma)</option>
+                <option value="type1">Predominantemente hipoxémica (V/Q, pneumonia, ARDS)</option>
+              </select>
+              <div class="muted small">Classificação usada em estudos pediátricos para risco de falência da VNI.</div>
+            </div>
+
+            <div class="row">
+              <label class="label" for="diag">Diagnóstico provável</label>
+              <select class="input" id="diag">
+                <option value="bronchiolitis" selected>Bronquiolite</option>
+                <option value="asthma">Asma / sibilância</option>
+                <option value="pneumonia">Pneumonia</option>
+                <option value="ards">ARDS / lesão pulmonar difusa</option>
+                <option value="other">Outro</option>
+              </select>
+            </div>
+
+            <div class="row">
+              <label class="label" for="prism">PRISM III-24</label>
+              <input class="input" id="prism" inputmode="numeric" placeholder="opcional (0–40+)" />
+              <div class="muted small">Se não souberes, deixa em branco (o score funciona sem PRISM).</div>
+            </div>
+
+            <div class="row">
+              <label class="label">Red flags (contra-indicações / falência iminente)</label>
+              <div class="checks">
+                <label class="check"><input type="checkbox" id="rfHemodyn" /> Instabilidade hemodinâmica persistente</label>
+                <label class="check"><input type="checkbox" id="rfGcs" /> Alteração do estado mental (GCS &lt; 10) / incapacidade de proteger via aérea</label>
+                <label class="check"><input type="checkbox" id="rfSecretions" /> Secreções não controláveis / necessidade de proteger via aérea</label>
+                <label class="check"><input type="checkbox" id="rfApnea" /> Apneias recorrentes</label>
+                <label class="check"><input type="checkbox" id="rfPtx" /> Pneumotórax não drenado</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>2) Dados antes da VNI e reavaliação precoce</h2>
+            <div class="muted small">A ferramenta valoriza marcadores nas primeiras 1–2 horas e tendência clínica.</div>
+
+            <div class="grid2a">
+              <div class="mini">
+                <h3>Baseline</h3>
+                <div class="row">
+                  <label class="label sm" for="spo2_0">SpO₂ (%)</label>
+                  <input class="input sm" id="spo2_0" inputmode="numeric" placeholder="ex: 90" />
+                </div>
+                <div class="row">
+                  <label class="label sm" for="fio2_0">FiO₂</label>
+                  <input class="input sm" id="fio2_0" inputmode="decimal" placeholder="ex: 0.60" />
+                </div>
+                <div class="row">
+                  <label class="label sm" for="rr_0">FR (min⁻¹)</label>
+                  <input class="input sm" id="rr_0" inputmode="numeric" placeholder="ex: 60" />
+                </div>
+                <div class="row">
+                  <label class="label sm" for="hr_0">FC (min⁻¹)</label>
+                  <input class="input sm" id="hr_0" inputmode="numeric" placeholder="ex: 160" />
+                </div>
+                <div class="row">
+                  <label class="label sm" for="ph_0">pH</label>
+                  <input class="input sm" id="ph_0" inputmode="decimal" placeholder="opcional" />
+                </div>
+                <div class="row">
+                  <label class="label sm" for="pco2_0">pCO₂ (mmHg)</label>
+                  <input class="input sm" id="pco2_0" inputmode="numeric" placeholder="opcional" />
+                </div>
+              </div>
+
+              <div class="mini">
+                <h3>+ 1–2 h</h3>
+                <div class="row">
+                  <label class="label sm" for="spo2_1">SpO₂ (%)</label>
+                  <input class="input sm" id="spo2_1" inputmode="numeric" placeholder="ex: 94" />
+                </div>
+                <div class="row">
+                  <label class="label sm" for="fio2_1">FiO₂</label>
+                  <input class="input sm" id="fio2_1" inputmode="decimal" placeholder="ex: 0.40" />
+                </div>
+                <div class="row">
+                  <label class="label sm" for="rr_1">FR (min⁻¹)</label>
+                  <input class="input sm" id="rr_1" inputmode="numeric" placeholder="ex: 45" />
+                </div>
+                <div class="row">
+                  <label class="label sm" for="hr_1">FC (min⁻¹)</label>
+                  <input class="input sm" id="hr_1" inputmode="numeric" placeholder="ex: 145" />
+                </div>
+                <div class="row">
+                  <label class="label sm" for="ipap_1">IPAP (cmH₂O)</label>
+                  <input class="input sm" id="ipap_1" inputmode="numeric" placeholder="opcional" />
+                </div>
+                <div class="row">
+                  <label class="label sm" for="ph_1">pH</label>
+                  <input class="input sm" id="ph_1" inputmode="decimal" placeholder="opcional" />
+                </div>
+                <div class="row">
+                  <label class="label sm" for="pco2_1">pCO₂ (mmHg)</label>
+                  <input class="input sm" id="pco2_1" inputmode="numeric" placeholder="opcional" />
+                </div>
+              </div>
+            </div>
+
+            <div class="cardnote">
+              <div><b>SF ratio</b> = SpO₂ / FiO₂ (FiO₂ em fração: 0.21–1.0). A evidência pediátrica sugere limiar ~<b>193</b> ao fim de 1 h como marcador de alto risco de falência precoce. </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card warning">
+          <h2>Nota de segurança</h2>
+          <p class="muted">
+            Esta ferramenta é <b>apoio à decisão/educacional</b>, baseada em marcadores publicados. Não substitui julgamento clínico, nem define, por si só,
+            indicação para intubação. Se existirem <b>red flags</b> (instabilidade, falência neurológica, etc.), a priorização é clínica e imediata.
+          </p>
+        </div>
+      </section>
+
+      <!-- RESULT -->
+      <section class="view hidden" id="view-result">
+        <div class="headrow">
+          <h1>Resultado</h1>
+          <div class="inline">
+            <button class="btn ghost" id="btnCopy">Copiar resumo</button>
+          </div>
+        </div>
+
+        <div class="grid2">
+          <div class="card" id="riskCard">
+            <h2>Risco estimado</h2>
+            <div class="riskline">
+              <div class="badge" id="riskBadge">—</div>
+              <div class="big" id="riskLabel">—</div>
+            </div>
+            <div class="muted" id="riskExplain">Preenche os dados e carrega em “Calcular”.</div>
+          </div>
+
+          <div class="card">
+            <h2>Métricas</h2>
+            <div class="kv">
+              <div class="k">SF baseline</div><div class="v" id="sf0">—</div>
+              <div class="k">SF 1–2 h</div><div class="v" id="sf1">—</div>
+              <div class="k">ΔFR</div><div class="v" id="drr">—</div>
+              <div class="k">ΔFC</div><div class="v" id="dhr">—</div>
+              <div class="k">Tendência pCO₂</div><div class="v" id="dpco2">—</div>
+              <div class="k">Score (0–100)</div><div class="v" id="score">—</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="actionsCard">
+          <h2>Ações sugeridas (dependentes do contexto)</h2>
+          <ul id="actionsList"></ul>
+        </div>
+
+        <div class="card">
+          <h2>Resumo para registo</h2>
+          <pre class="pre" id="summary">—</pre>
+        </div>
+      </section>
+
+      <!-- EVIDENCE -->
+      <section class="view hidden" id="view-evidence">
+        <h1>Evidência (o que foi implementado)</h1>
+
+        <div class="card">
+          <h2>Marcadores com melhor suporte em pediatria (primeiras horas)</h2>
+          <ul class="bul">
+            <li><b>SpO₂/FiO₂ (SF) precoce</b>: SF ao fim de 1 h é preditor de falência precoce; limiar sugerido ~<b>193</b> para falência ≤6 h. (Mayordomo‑Colunga 2013)</li>
+            <li><b>Idade baixa</b>: risco aumentado em lactentes (ex: &lt;6 meses) em coortes. (Pons‑Òdena 2019; Mayordomo‑Colunga 2013)</li>
+            <li><b>Gravidade global</b> (ex: PRISM): associada a falência em estudos prospetivos. (Mayordomo‑Colunga 2009; 2013)</li>
+            <li><b>Resposta fisiológica precoce</b>: menor redução da FR nas 1–6 h associa‑se a falência. (Mayordomo‑Colunga 2009; 2013)</li>
+            <li><b>FC elevada e pressões mais altas precoces (IPAP)</b> associam‑se a maior risco em coorte. (Pons‑Òdena 2019)</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <h2>Como o score é calculado (transparente)</h2>
+          <p class="muted">
+            O score (0–100) é uma combinação explícita de regras (não é “caixa‑preta”). Prioriza fortemente:
+            <b>SF a 1–2 h</b>, <b>ausência de melhoria da FR/FC</b>, <b>idade baixa</b>, <b>IRA hipoxémica/ARDS/pneumonia</b> e <b>PRISM</b>.
+            Red flags activam alerta “muito alto” independentemente do score numérico.
+          </p>
+          <div class="muted small">
+            Nota: os estudos publicados usam definições e populações diferentes; por isso, este score deve ser interpretado como “<i>triagem de risco</i>” e não como probabilidade calibrada.
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Principais referências</h2>
+          <ol class="refs">
+            <li>Mayordomo‑Colunga J, et al. <i>Predicting non-invasive ventilation failure in children from the SpO₂/FiO₂ (SF) ratio</i>. Intensive Care Med. 2013. (cutoff SF≈193 a 1 h)</li>
+            <li>Mayordomo‑Colunga J, et al. <i>Predictive factors of non invasive ventilation failure in critically ill children</i>. Intensive Care Med. 2009. (tipo 1, PRISM, menor queda de FR)</li>
+            <li>Pons‑Òdena M, et al. <i>Predictive factors of NIV failure in PICU</i>. An Pediatr (Barc). 2019. (idade &lt;6 m, SF, FC e IPAP a 2 h)</li>
+            <li>Baker AK, et al. <i>Predictors of Failure of Noninvasive Ventilation in Critically Ill Children</i>. 2021. (FiO₂ elevada, SF baixa, ausência de melhoria da taquipneia)</li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section class="view hidden" id="view-settings">
+        <h1>Definições</h1>
+        <div class="card">
+          <h2>Modo offline (PWA)</h2>
+          <div class="row">
+            <label class="label" for="togglePwa">Activar Service Worker</label>
+            <div class="inline">
+              <input type="checkbox" id="togglePwa" />
+              <span class="muted">Permite cache offline e adicionar ao ecrã inicial</span>
+            </div>
+          </div>
+
+          <div class="row">
+            <label class="label" for="baseUrl">Base URL (GitHub Pages)</label>
+            <input class="input" id="baseUrl" placeholder="Ex: /nome-do-repo/" />
+            <div class="muted small">
+              Se a app ficar em https://utilizador.github.io/nome-do-repo/ então base = <b>/nome-do-repo/</b>.
+            </div>
+          </div>
+
+          <div class="row">
+            <button class="btn ghost" id="btnApplyBase">Aplicar</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Dados locais</h2>
+          <p class="muted">Os dados ficam no teu browser (localStorage). Exporta/Importa para portabilidade.</p>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <footer class="bottombar">
+    <button class="tab active" data-route="calc">Calc</button>
+    <button class="tab" data-route="result">Resultado</button>
+    <button class="tab" data-route="evidence">Evidência</button>
+    <button class="tab" data-route="settings">Definições</button>
+  </footer>
+
+  <script defer src="app.js"></script>
+</body>
+</html>
