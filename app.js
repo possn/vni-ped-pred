@@ -8,6 +8,7 @@ const LS_KEY = "vni_pred_v1";
 const LS_PWA = "vni_pred_pwa_enabled";
 const LS_BASE = "vni_pred_baseurl";
 const LS_HISTORY = "vni_pred_history_v1";
+const LS_ROUND = "vni_pred_round_v1";
 
 const $ = (id) => document.getElementById(id);
 
@@ -83,6 +84,8 @@ function computeRisk(d){
   const out = {
     sf0: null, sf1: null,
     drrPct: null, dhrPct: null, dpco2: null,
+    ps: null,
+    oxyCtx: null,
     score: 0,
     tier: "—",
     badge: "—",
@@ -94,6 +97,10 @@ function computeRisk(d){
   };
 
   // red flags => immediate very high
+  const operationalCriteria = [
+    d.cfHypox, d.cfWork, d.cfHypercap, d.cfIntol
+  ].some(Boolean);
+
   const redFlags = [
     d.rfHemodyn, d.rfGcs, d.rfSecretions, d.rfApnea, d.rfPtx
   ].some(Boolean);
@@ -166,6 +173,7 @@ function computeRisk(d){
 
   // 6) FiO2 at initiation (proxy severity)
   const fio2_0 = safeNum(d.fio2_0);
+  const epap0 = safeNum(d.epap_0);
   if(fio2_0 !== null){
     if(fio2_0 >= 0.8) score += 8;
     else if(fio2_0 >= 0.6) score += 5;
@@ -183,6 +191,8 @@ function computeRisk(d){
 
   // 8) IPAP at 1–2 h (optional; higher IPAP early associated with failure in one study)
   const ipap = safeNum(d.ipap_1);
+  const epap = safeNum(d.epap_1);
+  if(ipap !== null && epap !== null) out.ps = ipap - epap;
   if(ipap !== null){
     if(ipap >= 18) score += 6;
     else if(ipap >= 14) score += 3;
@@ -200,7 +210,32 @@ function computeRisk(d){
     else if(ph1 < ph0 + 0.01) score += 2;
   }
 
-  // red flags override
+  
+  // Contexto de oxigenação (não altera score; é interpretação operacional)
+  const fio2_1 = parseFiO2(d.fio2_1);
+  const epap1 = safeNum(d.epap_1);
+  let oxy = [];
+  if(out.sf1 !== null){
+    if(out.sf1 < 150) oxy.push("SF muito baixo");
+    else if(out.sf1 < 193) oxy.push("SF baixo (<193)");
+    else oxy.push("SF aceitável");
+  }
+  if(fio2_1 !== null){
+    if(fio2_1 >= 0.7) oxy.push("FiO₂ alta (≥0.70)");
+    else if(fio2_1 >= 0.5) oxy.push("FiO₂ moderada (0.50–0.69)");
+    else oxy.push("FiO₂ baixa/moderada (<0.50)");
+  }
+  if(epap1 !== null){
+    if(epap1 >= 10) oxy.push("EPAP alta (≥10)");
+    else if(epap1 >= 8) oxy.push("EPAP moderada (8–9)");
+    else oxy.push("EPAP baixa (<8)");
+  } else if(epap0 !== null){
+    if(epap0 >= 10) oxy.push("EPAP base alta (≥10)");
+    else if(epap0 >= 8) oxy.push("EPAP base moderada (8–9)");
+  }
+  out.oxyCtx = oxy.length ? oxy.join(" • ") : null;
+
+// red flags override
   if(redFlags){ score = Math.max(score, 85); addFactor(50, "Red flags clínicas"); }
 
   out.score = clamp(Math.round(score), 0, 100);
@@ -223,6 +258,7 @@ function computeRisk(d){
   // explanations + actions
   const notes = [];
   if(redFlags) notes.push("Há red flags clínicas assinaladas (isto pesa mais do que qualquer score).");
+  if(operationalCriteria) notes.push("Critérios operacionais de falência assinalados (gatilhos de escalada).");
 
   if(out.sf1 !== null && out.sf1 < 193){
     notes.push(`SF a 1–2 h < 193 (SF=${out.sf1.toFixed(0)}): marcador de alto risco de falência precoce em coorte pediátrica.`);
@@ -241,6 +277,7 @@ function computeRisk(d){
 
   // action suggestions (generic, non-prescriptive)
   const actions = [];
+  if(operationalCriteria) actions.push("Há gatilhos assinalados: definir janela curta de reavaliação e plano de escalada (ex: intubação/VM se deterioração).");
   if(out.score >= 65 || redFlags){
     actions.push("Monitorização contínua e reavaliação frequente (ex: 15–30 min), com plano explícito de escalada.");
     actions.push("Verificar interface/leaks, sincronização, conforto; optimizar IPAP/EPAP conforme objetivo (oxigenação vs ventilação) e tolerância.");
@@ -264,8 +301,12 @@ function computeRisk(d){
   const lines = [];
   lines.push("VNI Pediátrica — Predição precoce (apoio à decisão)");
   lines.push(`Idade: ${ageM !== null ? ageM.toFixed(1) : "?"} meses | IRA: ${d.arfType==="type1"?"Hipoxémica (tipo 1)":"Hipercápnica/hipoventilação (tipo 2)"} | Dx: ${d.diag}`);
+  if(epap0 !== null || safeNum(d.epap_1) !== null){
+    const e1 = safeNum(d.epap_1);
+    lines.push(`EPAP0: ${epap0!==null?epap0.toFixed(0):"—"} | EPAP1-2h: ${e1!==null?e1.toFixed(0):"—"} | OxyCtx: ${out.oxyCtx||"—"}`);
+  }
   if(prism !== null) lines.push(`PRISM III-24: ${prism}`);
-  lines.push(`SF0: ${out.sf0!==null?out.sf0.toFixed(0):"—"} | SF1-2h: ${out.sf1!==null?out.sf1.toFixed(0):"—"} | ΔFR: ${out.drrPct!==null?out.drrPct.toFixed(0)+"%":"—"} | ΔFC: ${out.dhrPct!==null?out.dhrPct.toFixed(0)+"%":"—"}`);
+  lines.push(`SF0: ${out.sf0!==null?out.sf0.toFixed(0):"—"} | SF1-2h: ${out.sf1!==null?out.sf1.toFixed(0):"—"} | ΔFR: ${out.drrPct!==null?out.drrPct.toFixed(0)+"%":"—"} | ΔFC: ${out.dhrPct!==null?out.dhrPct.toFixed(0)+"%":"—"} | PS(IPAP−EPAP): ${out.ps!==null?out.ps.toFixed(0):"—"}`);
   if(out.dpco2 !== null) lines.push(`ΔpCO2: ${out.dpco2>0?"+":""}${out.dpco2.toFixed(0)} mmHg`);
   lines.push(`Score: ${out.score}/100 | Tier: ${out.tier}`);
   if(redFlags) lines.push("Red flags: SIM");
@@ -298,8 +339,14 @@ function gather(){
     rfApnea: $("rfApnea").checked,
     rfPtx: $("rfPtx").checked,
 
+    cfHypox: $("cfHypox") ? $("cfHypox").checked : false,
+    cfWork: $("cfWork") ? $("cfWork").checked : false,
+    cfHypercap: $("cfHypercap") ? $("cfHypercap").checked : false,
+    cfIntol: $("cfIntol") ? $("cfIntol").checked : false,
+
     spo2_0: $("spo2_0").value,
     fio2_0: $("fio2_0").value,
+    epap_0: $("epap_0").value,
     rr_0: $("rr_0").value,
     hr_0: $("hr_0").value,
     ph_0: $("ph_0").value,
@@ -310,6 +357,7 @@ function gather(){
     rr_1: $("rr_1").value,
     hr_1: $("hr_1").value,
     ipap_1: $("ipap_1").value,
+    epap_1: $("epap_1").value,
     ph_1: $("ph_1").value,
     pco2_1: $("pco2_1").value,
   };
@@ -328,7 +376,12 @@ function fill(d){
   $("rfApnea").checked = !!d.rfApnea;
   $("rfPtx").checked = !!d.rfPtx;
 
-  ["spo2_0","fio2_0","rr_0","hr_0","ph_0","pco2_0","spo2_1","fio2_1","rr_1","hr_1","ipap_1","ph_1","pco2_1"].forEach(k=>{
+  if($("cfHypox")) $("cfHypox").checked = !!d.cfHypox;
+  if($("cfWork")) $("cfWork").checked = !!d.cfWork;
+  if($("cfHypercap")) $("cfHypercap").checked = !!d.cfHypercap;
+  if($("cfIntol")) $("cfIntol").checked = !!d.cfIntol;
+
+  ["spo2_0","fio2_0","epap_0","rr_0","hr_0","ph_0","pco2_0","spo2_1","fio2_1","rr_1","hr_1","ipap_1","epap_1","ph_1","pco2_1"].forEach(k=>{
     $(k).value = d[k] ?? "";
   });
 
@@ -418,9 +471,12 @@ function updateAgeHint(){
 function renderResult(r, d){
   $("sf0").textContent = r.sf0===null ? "—" : r.sf0.toFixed(0);
   $("sf1").textContent = r.sf1===null ? "—" : r.sf1.toFixed(0);
+  $("oxyCtx").textContent = r.oxyCtx===null ? "—" : r.oxyCtx;
 
   $("drr").textContent = r.drrPct===null ? "—" : `${r.drrPct.toFixed(0)}%`;
   $("dhr").textContent = r.dhrPct===null ? "—" : `${r.dhrPct.toFixed(0)}%`;
+
+  $("ps").textContent = (r.ps===null ? "—" : `${r.ps.toFixed(0)} cmH₂O`);
 
   if(r.dpco2 === null) $("dpco2").textContent = "—";
   else $("dpco2").textContent = `${r.dpco2>0?"+":""}${r.dpco2.toFixed(0)} mmHg`;
@@ -540,6 +596,62 @@ function applyBase(){
 }
 
 /* ---- init ---- */
+
+function setRoundMode(on){
+  document.body.classList.toggle("roundMode", !!on);
+  localStorage.setItem(LS_ROUND, on ? "1" : "0");
+  const t = $("toggleRound");
+  if(t) t.checked = !!on;
+
+  // Hide/show selected advanced fields (simple approach)
+  const advancedIds = [
+    "prism","ph_0","pco2_0","ph_1","pco2_1","ipap_1","epap_0","epap_1"
+  ];
+  advancedIds.forEach(id=>{
+    const el = $(id);
+    if(!el) return;
+    // hide the containing row
+    const row = el.closest(".row");
+    if(row) row.style.display = on ? "none" : "";
+  });
+}
+
+function toggleRoundMode(){
+  const on = !(localStorage.getItem(LS_ROUND) === "1");
+  setRoundMode(on);
+}
+
+
+function applyPreset(name){
+  // Non-identifying example presets to test workflow.
+  const presets = {
+    bronch: {
+      ageValue:"3", ageUnit:"months", arfType:"type2", diag:"bronchiolitis",
+      spo2_0:"90", fio2_0:"0.60", epap_0:"6", rr_0:"65", hr_0:"165", pco2_0:"65", ph_0:"7.18",
+      spo2_1:"94", fio2_1:"0.45", rr_1:"50", hr_1:"145", ipap_1:"14", epap_1:"7", pco2_1:"55", ph_1:"7.26"
+    },
+    ards: {
+      ageValue:"24", ageUnit:"months", arfType:"type1", diag:"ards",
+      spo2_0:"88", fio2_0:"0.80", epap_0:"8", rr_0:"48", hr_0:"170",
+      spo2_1:"90", fio2_1:"0.75", rr_1:"46", hr_1:"168", ipap_1:"18", epap_1:"10"
+    }
+  };
+  const p = presets[name];
+  if(!p) return;
+  fill(p);
+  save(gather());
+  updateLivePreview();
+  setPill("Exemplo carregado.", true);
+}
+
+function clearNonID(){
+  // reset clinical fields without touching settings
+  fill({});
+  save(gather());
+  updateLivePreview();
+  setPill("Campos limpos.", true);
+}
+
 function initNav(){
   document.querySelectorAll("[data-route]").forEach(btn=>{
     btn.addEventListener("click", ()=>{
@@ -558,6 +670,7 @@ function initActions(){
     const when = new Date().toLocaleString();
     pushHistory({ when, score: r.score, tier: r.tier, brief: r.brief, data: d });
     renderHistory();
+  updateLivePreview();
 
     setRoute("result");
   });
@@ -582,6 +695,15 @@ function initActions(){
 
   $("btnCopy").addEventListener("click", copySummary);
 
+  // Presets
+  $("btnPresetBronch") && $("btnPresetBronch").addEventListener("click", ()=>applyPreset("bronch"));
+  $("btnPresetARDS") && $("btnPresetARDS").addEventListener("click", ()=>applyPreset("ards"));
+  $("btnClearNonID") && $("btnClearNonID").addEventListener("click", clearNonID);
+
+  // Round mode toggle
+  $("toggleRound") && $("toggleRound").addEventListener("change", (e)=>setRoundMode(e.target.checked));
+
+
   // Mobile overflow menu
   const menuBtn = $("btnMenu");
   const menu = $("menuPanel");
@@ -595,6 +717,8 @@ function initActions(){
   hook("mImport", ()=>$("fileImport").click());
   hook("mPrint", doPrint);
   hook("mReset", ()=>$("btnReset").click());
+  hook("mRound", toggleRoundMode);
+
 
   $("ageValue").addEventListener("input", updateAgeHint);
   $("ageUnit").addEventListener("change", updateAgeHint);
@@ -626,6 +750,48 @@ function initActions(){
   });
 }
 
+
+let liveTimer = null;
+
+function updateLivePreview(){
+  const d = gather();
+  const sf0 = calcSF(d.spo2_0, d.fio2_0);
+  const sf1 = calcSF(d.spo2_1, d.fio2_1);
+
+  const fio2_1 = parseFiO2(d.fio2_1);
+  const epap1 = safeNum(d.epap_1);
+  const epap0 = safeNum(d.epap_0);
+
+  let oxy = [];
+  if(sf1 !== null){
+    if(sf1 < 150) oxy.push("SF muito baixo");
+    else if(sf1 < 193) oxy.push("SF baixo (<193)");
+    else oxy.push("SF aceitável");
+  }
+  if(fio2_1 !== null){
+    if(fio2_1 >= 0.7) oxy.push("FiO₂ alta");
+    else if(fio2_1 >= 0.5) oxy.push("FiO₂ moderada");
+    else oxy.push("FiO₂ baixa/moderada");
+  }
+  if(epap1 !== null){
+    if(epap1 >= 10) oxy.push("EPAP alta");
+    else if(epap1 >= 8) oxy.push("EPAP moderada");
+    else oxy.push("EPAP baixa");
+  } else if(epap0 !== null){
+    if(epap0 >= 10) oxy.push("EPAP base alta");
+    else if(epap0 >= 8) oxy.push("EPAP base moderada");
+  }
+
+  if($("liveSf0")) $("liveSf0").textContent = sf0===null ? "—" : sf0.toFixed(0);
+  if($("liveSf1")) $("liveSf1").textContent = sf1===null ? "—" : sf1.toFixed(0);
+  if($("liveOxy")) $("liveOxy").textContent = oxy.length ? oxy.join(" • ") : "—";
+}
+
+function scheduleLive(){
+  if(liveTimer) clearTimeout(liveTimer);
+  liveTimer = setTimeout(updateLivePreview, 120);
+}
+
 function init(){
   initNav();
   initActions();
@@ -634,6 +800,11 @@ function init(){
   if(saved) fill(saved);
   else fill({});
   renderHistory();
+  updateLivePreview();
+
+  // round mode
+  const roundOn = localStorage.getItem(LS_ROUND) === "1";
+  setRoundMode(roundOn);
 
   // pwa toggle state
   const pwaEnabled = localStorage.getItem(LS_PWA) === "1";

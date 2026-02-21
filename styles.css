@@ -33,8 +33,8 @@ html,body{ height:100%; margin:0; font-family: ui-sans-serif, system-ui, -apple-
   width:34px; height:34px; border-radius:10px;
   box-shadow: var(--shadow);
 }
-.title{ font-weight:800; letter-spacing:.2px; }
-.subtitle{ font-size:12px; color:var(--muted); margin-top:2px; }
+.title{ font-weight:800; letter-spacing:.2px; line-height: 1.15; }
+.subtitle{ font-size:12px; color:var(--muted); margin-top:2px; line-height: 1.15; }
 
 .actions{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
 
@@ -299,4 +299,38 @@ html{ scroll-padding-top: calc(72px + env(safe-area-inset-top)); }
   .card{ box-shadow:none !important; background: white !important; border:1px solid #ddd !important; }
   .muted{ color: #333 !important; }
   .pre{ background: #f6f6f6 !important; border:1px solid #ddd !important; color:#111 !important; }
+}
+
+/* Stabilize header height (avoid wrapping on narrow widths) */
+.brand{ min-width: 0; }
+.title, .subtitle{
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 52vw;
+}
+@media (max-width: 980px){
+  .title, .subtitle{ max-width: 48vw; }
+  .subtitle{ display:none; }
+}
+
+/* Toggle switch (header) */
+.switch{ display:inline-flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border); border-radius: 999px; background: rgba(255,255,255,.04); }
+.switch input{ display:none; }
+.slider{ width:42px; height:24px; border-radius: 999px; border:1px solid var(--border); background: rgba(0,0,0,.18); position:relative; }
+.slider:before{ content:""; position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius: 50%; background: rgba(255,255,255,.75); transition: transform .15s ease; }
+.switch input:checked + .slider{ border-color: rgba(59,130,246,.55); background: rgba(59,130,246,.20); }
+.switch input:checked + .slider:before{ transform: translateX(18px); background: rgba(233,239,255,.95); }
+.swlabel{ font-weight:900; color: var(--text); font-size: 12px; }
+
+/* Small button row */
+.smallbtns{ margin-top: 8px; gap: 8px; flex-wrap:wrap; }
+.smallbtns .btn{ padding: 8px 10px; border-radius: 12px; font-weight: 900; }
+
+/* Round mode: hide advanced inputs */
+.roundOnlyHide{ display:block; }
+.roundMode .roundOnlyHide{ display:none !important; }
+
+@media (max-width: 420px){
+  .swlabel{ display:none; }
 }

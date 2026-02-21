@@ -35,6 +35,7 @@
       <button class="btn ghost desktopOnly" id="btnReset" title="Repor formulário">Repor</button>
 
       <!-- Mobile overflow -->
+      <label class="switch desktopOnly" title="Modo ronda (inputs essenciais)"><input type="checkbox" id="toggleRound"><span class="slider"></span><span class="swlabel">Ronda</span></label>
       <button class="btn ghost mobileOnly" id="btnMenu" aria-haspopup="true" aria-expanded="false" title="Ações">Ações ▾</button>
 
       <button class="btn" id="btnCalc" title="Calcular risco">Calcular</button>
@@ -44,6 +45,7 @@
       <button class="menuItem" id="mExport" role="menuitem">Exportar</button>
       <button class="menuItem" id="mImport" role="menuitem">Importar</button>
       <button class="menuItem" id="mPrint" role="menuitem">Imprimir / PDF</button>
+      <button class="menuItem" id="mRound" role="menuitem">Alternar modo ronda</button>
       <button class="menuItem danger" id="mReset" role="menuitem">Repor</button>
     </div>
   </header>
@@ -66,6 +68,11 @@
         <div class="grid2">
           <div class="card">
             <h2>1) Contexto clínico</h2>
+            <div class="inline smallbtns">
+              <button class="btn ghost" id="btnPresetBronch" type="button">Exemplo: bronquiolite</button>
+              <button class="btn ghost" id="btnPresetARDS" type="button">Exemplo: ARDS</button>
+              <button class="btn ghost" id="btnClearNonID" type="button">Limpar campos</button>
+            </div>
 
             <div class="row">
               <label class="label" for="ageMonths">Idade</label>
@@ -115,7 +122,18 @@
                 <label class="check"><input type="checkbox" id="rfApnea" /> Apneias recorrentes</label>
                 <label class="check"><input type="checkbox" id="rfPtx" /> Pneumotórax não drenado</label>
               </div>
+            
+            <div class="row">
+              <label class="label">Critérios operacionais de falência (gatilhos)</label>
+              <div class="checks">
+                <label class="check"><input type="checkbox" id="cfHypox" /> Hipoxemia persistente apesar de optimização (FiO₂/EPAP) e interface</label>
+                <label class="check"><input type="checkbox" id="cfWork" /> Trabalho respiratório/exaustão progressiva (tiragem, fadiga)</label>
+                <label class="check"><input type="checkbox" id="cfHypercap" /> Hipercapnia/acidemia a agravar apesar de VNI</label>
+                <label class="check"><input type="checkbox" id="cfIntol" /> Intolerância/interface impossível (leaks incontroláveis)</label>
+              </div>
+              <div class="muted small">Não altera o score numérico, mas aparece como alerta no Resultado.</div>
             </div>
+</div>
           </div>
 
           <div class="card">
@@ -133,6 +151,11 @@
                   <label class="label sm" for="fio2_0">FiO₂</label>
                   <input class="input sm" id="fio2_0" inputmode="decimal" placeholder="ex: 0.60" />
                 </div>
+                <div class="row">
+                  <label class="label sm" for="epap_0">EPAP (cmH₂O)</label>
+                  <input class="input sm" id="epap_0" inputmode="numeric" placeholder="opcional" />
+                </div>
+
                 <div class="row">
                   <label class="label sm" for="rr_0">FR (min⁻¹)</label>
                   <input class="input sm" id="rr_0" inputmode="numeric" placeholder="ex: 60" />
@@ -174,6 +197,11 @@
                   <input class="input sm" id="ipap_1" inputmode="numeric" placeholder="opcional" />
                 </div>
                 <div class="row">
+                  <label class="label sm" for="epap_1">EPAP (cmH₂O)</label>
+                  <input class="input sm" id="epap_1" inputmode="numeric" placeholder="opcional" />
+                </div>
+
+                <div class="row">
                   <label class="label sm" for="ph_1">pH</label>
                   <input class="input sm" id="ph_1" inputmode="decimal" placeholder="opcional" />
                 </div>
@@ -190,12 +218,25 @@
           </div>
         </div>
 
+
+        <div class="card">
+          <h2>Pré-visualização (em tempo real)</h2>
+          <div class="kv">
+            <div class="k">SF baseline</div><div class="v" id="liveSf0">—</div>
+            <div class="k">SF 1–2 h</div><div class="v" id="liveSf1">—</div>
+            <div class="k">Contexto oxigenação</div><div class="v" id="liveOxy">—</div>
+          </div>
+          <div class="muted small">Actualiza automaticamente quando preenches SpO₂/FiO₂/EPAP.</div>
+        </div>
+
         <div class="card warning">
           <h2>Nota de segurança</h2>
           <p class="muted">
             Esta ferramenta é <b>apoio à decisão/educacional</b>, baseada em marcadores publicados. Não substitui julgamento clínico, nem define, por si só,
             indicação para intubação. Se existirem <b>red flags</b> (instabilidade, falência neurológica, etc.), a priorização é clínica e imediata.
           </p>
+            <div class="cardnote">EPAP foi incluído como parâmetro contextual (oxigenação/PEEP). A evidência pediátrica publicada aponta mais consistentemente para SF, FR/FC e IPAP como preditores independentes; por isso, nesta versão EPAP não altera o score, mas aparece no resumo.</div>
+
         </div>
       </section>
 
@@ -223,8 +264,10 @@
             <div class="kv">
               <div class="k">SF baseline</div><div class="v" id="sf0">—</div>
               <div class="k">SF 1–2 h</div><div class="v" id="sf1">—</div>
+              <div class="k">Contexto oxigenação</div><div class="v" id="oxyCtx">—</div>
               <div class="k">ΔFR</div><div class="v" id="drr">—</div>
               <div class="k">ΔFC</div><div class="v" id="dhr">—</div>
+              <div class="k">Pressão suporte (IPAP−EPAP)</div><div class="v" id="ps">—</div>
               <div class="k">Tendência pCO₂</div><div class="v" id="dpco2">—</div>
               <div class="k">Score (0–100)</div><div class="v" id="score">—</div>
             </div>
