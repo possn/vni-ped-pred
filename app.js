@@ -1,3 +1,16 @@
+
+// Zoom detect (iOS per-site zoom can persist; cannot be forced programmatically)
+function checkZoomHint(){
+  try{
+    if(!window.visualViewport) return;
+    const s = window.visualViewport.scale;
+    const el = document.getElementById("pillStatus");
+    if(s && Math.abs(s - 1) > 0.02){
+      setPill("Nota: o browser está com zoom. Em Safari: aA → Zoom 100%.", false);
+    }
+  }catch{}
+}
+
 /* VNI Pediátrica — Predição Precoce
    - Regras transparentes (não-ML) baseadas em marcadores publicados.
    - Dados ficam localmente (localStorage).
@@ -623,6 +636,7 @@ function applyPreset(name){
   fill(p);
   save(gather());
   updateLivePreview();
+  checkZoomHint();
   setPill("Exemplo carregado.", true);
 }
 
@@ -631,6 +645,7 @@ function clearNonID(){
   fill({});
   save(gather());
   updateLivePreview();
+  checkZoomHint();
   setPill("Campos limpos.", true);
 }
 
@@ -653,6 +668,7 @@ function initActions(){
     pushHistory({ when, score: r.score, tier: r.tier, brief: r.brief, data: d });
     renderHistory();
   updateLivePreview();
+  checkZoomHint();
 
     setRoute("result");
   });
@@ -774,6 +790,7 @@ function init(){
   else fill({});
   renderHistory();
   updateLivePreview();
+  checkZoomHint();
 
   // round mode
   const roundOn = localStorage.getItem(LS_ROUND) === "1";
@@ -793,3 +810,4 @@ function init(){
 }
 
 document.addEventListener("DOMContentLoaded", init);
+if(window.visualViewport){ window.visualViewport.addEventListener('resize', checkZoomHint); }
