@@ -84,7 +84,6 @@ function computeRisk(d){
   const out = {
     sf0: null, sf1: null,
     drrPct: null, dhrPct: null, dpco2: null,
-    ps: null,
     oxyCtx: null,
     score: 0,
     tier: "—",
@@ -173,7 +172,7 @@ function computeRisk(d){
 
   // 6) FiO2 at initiation (proxy severity)
   const fio2_0 = safeNum(d.fio2_0);
-  const epap0 = safeNum(d.epap_0);
+
   if(fio2_0 !== null){
     if(fio2_0 >= 0.8) score += 8;
     else if(fio2_0 >= 0.6) score += 5;
@@ -191,8 +190,7 @@ function computeRisk(d){
 
   // 8) IPAP at 1–2 h (optional; higher IPAP early associated with failure in one study)
   const ipap = safeNum(d.ipap_1);
-  const epap = safeNum(d.epap_1);
-  if(ipap !== null && epap !== null) out.ps = ipap - epap;
+
   if(ipap !== null){
     if(ipap >= 18) score += 6;
     else if(ipap >= 14) score += 3;
@@ -211,9 +209,8 @@ function computeRisk(d){
   }
 
   
-  // Contexto de oxigenação (não altera score; é interpretação operacional)
+  // Contexto de oxigenação (não altera score; interpretação operacional)
   const fio2_1 = parseFiO2(d.fio2_1);
-  const epap1 = safeNum(d.epap_1);
   let oxy = [];
   if(out.sf1 !== null){
     if(out.sf1 < 150) oxy.push("SF muito baixo");
@@ -224,14 +221,6 @@ function computeRisk(d){
     if(fio2_1 >= 0.7) oxy.push("FiO₂ alta (≥0.70)");
     else if(fio2_1 >= 0.5) oxy.push("FiO₂ moderada (0.50–0.69)");
     else oxy.push("FiO₂ baixa/moderada (<0.50)");
-  }
-  if(epap1 !== null){
-    if(epap1 >= 10) oxy.push("EPAP alta (≥10)");
-    else if(epap1 >= 8) oxy.push("EPAP moderada (8–9)");
-    else oxy.push("EPAP baixa (<8)");
-  } else if(epap0 !== null){
-    if(epap0 >= 10) oxy.push("EPAP base alta (≥10)");
-    else if(epap0 >= 8) oxy.push("EPAP base moderada (8–9)");
   }
   out.oxyCtx = oxy.length ? oxy.join(" • ") : null;
 
@@ -301,12 +290,8 @@ function computeRisk(d){
   const lines = [];
   lines.push("VNI Pediátrica — Predição precoce (apoio à decisão)");
   lines.push(`Idade: ${ageM !== null ? ageM.toFixed(1) : "?"} meses | IRA: ${d.arfType==="type1"?"Hipoxémica (tipo 1)":"Hipercápnica/hipoventilação (tipo 2)"} | Dx: ${d.diag}`);
-  if(epap0 !== null || safeNum(d.epap_1) !== null){
-    const e1 = safeNum(d.epap_1);
-    lines.push(`EPAP0: ${epap0!==null?epap0.toFixed(0):"—"} | EPAP1-2h: ${e1!==null?e1.toFixed(0):"—"} | OxyCtx: ${out.oxyCtx||"—"}`);
-  }
   if(prism !== null) lines.push(`PRISM III-24: ${prism}`);
-  lines.push(`SF0: ${out.sf0!==null?out.sf0.toFixed(0):"—"} | SF1-2h: ${out.sf1!==null?out.sf1.toFixed(0):"—"} | ΔFR: ${out.drrPct!==null?out.drrPct.toFixed(0)+"%":"—"} | ΔFC: ${out.dhrPct!==null?out.dhrPct.toFixed(0)+"%":"—"} | PS(IPAP−EPAP): ${out.ps!==null?out.ps.toFixed(0):"—"}`);
+  lines.push(`SF0: ${out.sf0!==null?out.sf0.toFixed(0):"—"} | SF1-2h: ${out.sf1!==null?out.sf1.toFixed(0):"—"} | ΔFR: ${out.drrPct!==null?out.drrPct.toFixed(0)+"%":"—"} | ΔFC: ${out.dhrPct!==null?out.dhrPct.toFixed(0)+"%":"—"}`);
   if(out.dpco2 !== null) lines.push(`ΔpCO2: ${out.dpco2>0?"+":""}${out.dpco2.toFixed(0)} mmHg`);
   lines.push(`Score: ${out.score}/100 | Tier: ${out.tier}`);
   if(redFlags) lines.push("Red flags: SIM");
@@ -475,9 +460,6 @@ function renderResult(r, d){
 
   $("drr").textContent = r.drrPct===null ? "—" : `${r.drrPct.toFixed(0)}%`;
   $("dhr").textContent = r.dhrPct===null ? "—" : `${r.dhrPct.toFixed(0)}%`;
-
-  $("ps").textContent = (r.ps===null ? "—" : `${r.ps.toFixed(0)} cmH₂O`);
-
   if(r.dpco2 === null) $("dpco2").textContent = "—";
   else $("dpco2").textContent = `${r.dpco2>0?"+":""}${r.dpco2.toFixed(0)} mmHg`;
 
@@ -759,8 +741,7 @@ function updateLivePreview(){
   const sf1 = calcSF(d.spo2_1, d.fio2_1);
 
   const fio2_1 = parseFiO2(d.fio2_1);
-  const epap1 = safeNum(d.epap_1);
-  const epap0 = safeNum(d.epap_0);
+  // EPAP é parâmetro contextual; não é mostrado no banner/preview (ver Evidência).
 
   let oxy = [];
   if(sf1 !== null){
@@ -772,14 +753,6 @@ function updateLivePreview(){
     if(fio2_1 >= 0.7) oxy.push("FiO₂ alta");
     else if(fio2_1 >= 0.5) oxy.push("FiO₂ moderada");
     else oxy.push("FiO₂ baixa/moderada");
-  }
-  if(epap1 !== null){
-    if(epap1 >= 10) oxy.push("EPAP alta");
-    else if(epap1 >= 8) oxy.push("EPAP moderada");
-    else oxy.push("EPAP baixa");
-  } else if(epap0 !== null){
-    if(epap0 >= 10) oxy.push("EPAP base alta");
-    else if(epap0 >= 8) oxy.push("EPAP base moderada");
   }
 
   if($("liveSf0")) $("liveSf0").textContent = sf0===null ? "—" : sf0.toFixed(0);

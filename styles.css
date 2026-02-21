@@ -1,4 +1,5 @@
 :root{
+  --topbar-h: 74px;
   --bg:#071025;
   --panel:#0b1220;
   --card:#0f1a33;
@@ -20,11 +21,16 @@
 html,body{ height:100%; margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:var(--bg); color:var(--text); }
 
 .topbar{
-  position:sticky; top:0; z-index:10;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
   display:flex; gap:12px; justify-content:space-between; align-items:center;
   padding: calc(12px + env(safe-area-inset-top)) 14px 12px 14px;
   background:rgba(11,18,32,.85);
   backdrop-filter: blur(10px);
+  min-height: var(--topbar-h);
   border-bottom:1px solid var(--border);
 }
 
@@ -333,4 +339,13 @@ html{ scroll-padding-top: calc(72px + env(safe-area-inset-top)); }
 
 @media (max-width: 420px){
   .swlabel{ display:none; }
+}
+
+body{ padding-top: calc(var(--topbar-h) + env(safe-area-inset-top)); }
+
+.logo{ width:54px; height:54px; border-radius: 14px; box-shadow: 0 10px 24px rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.06); }
+
+@media (max-width: 420px){
+  :root{ --topbar-h: 68px; }
+  .logo{ width:48px; height:48px; border-radius: 12px; }
 }
