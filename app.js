@@ -6,7 +6,7 @@ function checkZoomHint(){
     const s = window.visualViewport.scale;
     const el = document.getElementById("pillStatus");
     if(s && Math.abs(s - 1) > 0.02){
-      setPill("Nota: o browser está com zoom. Em Safari: aA → Zoom 100%.", false);
+      setPill("Nota: esta página está com zoom. Se vires um botão ‘X’ no topo (browser dentro de app), usa ⤴︎ Partilhar → Abrir no Safari → aA → Zoom 100%.", false);
     }
   }catch{}
 }
@@ -722,6 +722,28 @@ function initActions(){
   $("ageUnit").addEventListener("change", updateAgeHint);
 
   $("btnApplyBase").addEventListener("click", applyBase);
+
+  // Open in Safari / Copy link (helps when opened inside in-app browser where zoom persists)
+  const btnOS = $("btnOpenSafari");
+  btnOS && btnOS.addEventListener("click", ()=>{
+    try{ window.open(window.location.href, "_blank"); }catch{ window.location.href = window.location.href; }
+  });
+  const btnCL = $("btnCopyLink");
+  btnCL && btnCL.addEventListener("click", async ()=>{
+    try{
+      await navigator.clipboard.writeText(window.location.href);
+      setPill("Link copiado.", true);
+    }catch{
+      // fallback
+      const ta = document.createElement("textarea");
+      ta.value = window.location.href;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+      setPill("Link copiado.", true);
+    }
+  });
 
   const btnUpdate = $("btnUpdateApp");
   btnUpdate && btnUpdate.addEventListener("click", async ()=>{
