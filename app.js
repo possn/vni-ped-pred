@@ -7,6 +7,7 @@
 const LS_KEY = "vni_pred_v1";
 const LS_PWA = "vni_pred_pwa_enabled";
 const LS_BASE = "vni_pred_baseurl";
+const LS_HISTORY = "vni_pred_history_v1";
 
 const $ = (id) => document.getElementById(id);
 
@@ -35,6 +36,17 @@ function safeNum(x){
   return Number.isFinite(n) ? n : null;
 }
 
+
+
+function parseFiO2(x){
+  const n = safeNum(x);
+  if(n === null) return null;
+  // allow input in % (e.g., 40) or fraction (0.40)
+  if(n > 1.0 && n <= 100) return n / 100;
+  return n;
+}
+
+
 function clamp(n, a, b){
   return Math.max(a, Math.min(b, n));
 }
@@ -49,7 +61,7 @@ function toMonths(ageValue, unit){
 
 function calcSF(spo2, fio2){
   const s = safeNum(spo2);
-  const f = safeNum(fio2);
+  const f = parseFiO2(fio2);
   if(s === null || f === null || f <= 0) return null;
   return s / f;
 }
@@ -76,13 +88,18 @@ function computeRisk(d){
     badge: "—",
     explain: "",
     actions: [],
-    summary: ""
+    summary: "",
+    topFactors: [],
+    brief: ""
   };
 
   // red flags => immediate very high
   const redFlags = [
     d.rfHemodyn, d.rfGcs, d.rfSecretions, d.rfApnea, d.rfPtx
   ].some(Boolean);
+
+  const factors = [];
+  const addFactor = (w, label) => { factors.push({w, label}); };
 
   // derived
   out.sf0 = calcSF(d.spo2_0, d.fio2_0);
@@ -103,10 +120,10 @@ function computeRisk(d){
 
   // 1) SF at 1–2 h (heavy weight)
   if(out.sf1 !== null){
-    if(out.sf1 < 150) score += 40;
-    else if(out.sf1 < 193) score += 30;        // evidence-driven threshold
-    else if(out.sf1 < 220) score += 18;
-    else if(out.sf1 < 260) score += 10;
+    if(out.sf1 < 150) { score += 40; addFactor(40, `SF 1–2 h < 150 (SF=${out.sf1.toFixed(0)})`); }
+    else if(out.sf1 < 193) { score += 30; addFactor(30, `SF 1–2 h < 193 (SF=${out.sf1.toFixed(0)})`); }        // evidence-driven threshold
+    else if(out.sf1 < 220) { score += 18; addFactor(18, `SF 1–2 h 193–219 (SF=${out.sf1.toFixed(0)})`); }
+    else if(out.sf1 < 260) { score += 10; addFactor(10, `SF 1–2 h 220–259 (SF=${out.sf1.toFixed(0)})`); }
     else score += 3;
   } else {
     score += 10; // unknown => conservative
@@ -115,8 +132,8 @@ function computeRisk(d){
   // 2) Change in RR (expect decrease)
   // note: drrPct is (new-old)/old, so negative is improvement
   if(out.drrPct !== null){
-    if(out.drrPct >= 0) score += 18;           // no improvement/worse
-    else if(out.drrPct > -10) score += 12;     // <10% drop
+    if(out.drrPct >= 0) { score += 18; addFactor(18, "FR não melhorou / piorou"); }           // no improvement/worse
+    else if(out.drrPct > -10) { score += 12; addFactor(12, "Queda de FR < 10%" ); }     // <10% drop
     else if(out.drrPct > -20) score += 7;
     else score += 2;
   } else {
@@ -135,7 +152,7 @@ function computeRisk(d){
 
   // 4) Age risk
   if(ageM !== null){
-    if(ageM < 6) score += 10;        // Pons-Òdena 2019; synchrony issues etc.
+    if(ageM < 6) { score += 10; addFactor(10, "Idade < 6 meses"); }        // Pons-Òdena 2019; synchrony issues etc.
     else if(ageM < 12) score += 6;
     else score += 2;
   } else {
@@ -143,9 +160,9 @@ function computeRisk(d){
   }
 
   // 5) ARF type / diagnosis
-  if(d.arfType === "type1") score += 10; // Mayordomo 2009: type1 higher failure odds
-  if(d.diag === "ards") score += 12;
-  else if(d.diag === "pneumonia") score += 8;
+  if(d.arfType === "type1") { score += 10; addFactor(10, "IRA hipoxémica (tipo 1)"); } // Mayordomo 2009: type1 higher failure odds
+  if(d.diag === "ards") { score += 12; addFactor(12, "ARDS" ); }
+  else if(d.diag === "pneumonia") { score += 8; addFactor(8, "Pneumonia" ); }
 
   // 6) FiO2 at initiation (proxy severity)
   const fio2_0 = safeNum(d.fio2_0);
@@ -184,7 +201,7 @@ function computeRisk(d){
   }
 
   // red flags override
-  if(redFlags) score = Math.max(score, 85);
+  if(redFlags){ score = Math.max(score, 85); addFactor(50, "Red flags clínicas"); }
 
   out.score = clamp(Math.round(score), 0, 100);
 
@@ -254,6 +271,15 @@ function computeRisk(d){
   if(redFlags) lines.push("Red flags: SIM");
   out.summary = lines.join("\n");
 
+  factors.sort((a,b)=>b.w-a.w);
+  out.topFactors = factors.slice(0,3).map(x=>x.label);
+
+  const briefParts = [];
+  if(out.sf1 !== null) briefParts.push(`SF1-2h=${out.sf1.toFixed(0)}`);
+  if(out.drrPct !== null) briefParts.push(`ΔFR=${out.drrPct.toFixed(0)}%`);
+  if(out.dhrPct !== null) briefParts.push(`ΔFC=${out.dhrPct.toFixed(0)}%`);
+  out.brief = briefParts.join(" | ");
+
   return out;
 }
 
@@ -319,6 +345,66 @@ function load(){
   try { return JSON.parse(raw); } catch { return null; }
 }
 
+
+function loadHistory(){
+  const raw = localStorage.getItem(LS_HISTORY);
+  if(!raw) return [];
+  try{
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  }catch{ return []; }
+}
+
+function pushHistory(entry){
+  const hist = loadHistory();
+  hist.unshift(entry);
+  const trimmed = hist.slice(0, 10);
+  localStorage.setItem(LS_HISTORY, JSON.stringify(trimmed));
+  return trimmed;
+}
+
+function renderHistory(){
+  const box = $("historyList");
+  if(!box) return;
+  const hist = loadHistory();
+  if(hist.length === 0){
+    box.innerHTML = '<div class="muted">Sem histórico ainda.</div>';
+    return;
+  }
+  box.innerHTML = "";
+  hist.forEach((h)=>{
+    const wrap = document.createElement("div");
+    wrap.className = "hitem";
+
+    const meta = document.createElement("div");
+    meta.className = "hmeta";
+    const l1 = document.createElement("div");
+    l1.className = "hline1";
+    l1.textContent = `${h.tier} • ${h.score}/100 • ${h.when}`;
+    const l2 = document.createElement("div");
+    l2.className = "hline2";
+    l2.textContent = h.brief;
+
+    meta.appendChild(l1);
+    meta.appendChild(l2);
+
+    const btn = document.createElement("button");
+    btn.className = "hbtn";
+    btn.textContent = "Carregar";
+    btn.addEventListener("click", ()=>{
+      fill(h.data);
+      save(gather());
+      setRoute("calc");
+      window.scrollTo({top:0, behavior:"smooth"});
+    });
+
+    wrap.appendChild(meta);
+    wrap.appendChild(btn);
+    box.appendChild(wrap);
+  });
+}
+
+
 function resetForm(){
   localStorage.removeItem(LS_KEY);
   fill({});
@@ -343,7 +429,7 @@ function renderResult(r, d){
 
   $("riskBadge").textContent = r.badge;
   $("riskLabel").textContent = r.tier;
-  $("riskExplain").textContent = r.explain;
+  $("riskExplain").textContent = r.explain + (r.topFactors && r.topFactors.length ? "  Fatores principais: " + r.topFactors.join("; ") : "");
 
   // style badge by tier
   const badge = $("riskBadge");
@@ -468,6 +554,11 @@ function initActions(){
     save(d);
     const r = computeRisk(d);
     renderResult(r, d);
+
+    const when = new Date().toLocaleString();
+    pushHistory({ when, score: r.score, tier: r.tier, brief: r.brief, data: d });
+    renderHistory();
+
     setRoute("result");
   });
 
@@ -480,6 +571,8 @@ function initActions(){
   });
 
   $("btnExport").addEventListener("click", exportJSON);
+  const doPrint = ()=>{ setRoute("result"); setTimeout(()=>window.print(), 50); };
+  $("btnPrint") && $("btnPrint").addEventListener("click", doPrint);
   $("btnImport").addEventListener("click", ()=> $("fileImport").click());
   $("fileImport").addEventListener("change", (e)=>{
     const f = e.target.files && e.target.files[0];
@@ -489,10 +582,44 @@ function initActions(){
 
   $("btnCopy").addEventListener("click", copySummary);
 
+  // Mobile overflow menu
+  const menuBtn = $("btnMenu");
+  const menu = $("menuPanel");
+  const closeMenu = ()=>{ if(menu){ menu.classList.add("hidden"); menuBtn && menuBtn.setAttribute("aria-expanded","false"); } };
+  const toggleMenu = ()=>{ if(!menu) return; const isHidden = menu.classList.contains("hidden"); if(isHidden){ menu.classList.remove("hidden"); menuBtn && menuBtn.setAttribute("aria-expanded","true"); } else { closeMenu(); } };
+  menuBtn && menuBtn.addEventListener("click", toggleMenu);
+  document.addEventListener("click", (e)=>{ if(!menu || !menuBtn) return; if(menu.contains(e.target) || menuBtn.contains(e.target)) return; closeMenu(); });
+
+  const hook = (id, fn)=>{ const el = $(id); if(el) el.addEventListener("click", ()=>{ closeMenu(); fn(); }); };
+  hook("mExport", exportJSON);
+  hook("mImport", ()=>$("fileImport").click());
+  hook("mPrint", doPrint);
+  hook("mReset", ()=>$("btnReset").click());
+
   $("ageValue").addEventListener("input", updateAgeHint);
   $("ageUnit").addEventListener("change", updateAgeHint);
 
   $("btnApplyBase").addEventListener("click", applyBase);
+
+  const btnUpdate = $("btnUpdateApp");
+  btnUpdate && btnUpdate.addEventListener("click", async ()=>{
+    try{
+      if("caches" in window){
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k=>caches.delete(k)));
+      }
+      if("serviceWorker" in navigator){
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r=>r.unregister()));
+      }
+      localStorage.setItem(LS_PWA, "0");
+      $("togglePwa").checked = false;
+      setPill("Cache limpa. Reabre a app.", true);
+    }catch(e){
+      console.error(e);
+      setPill("Falha ao limpar cache.", false);
+    }
+  });
 
   $("togglePwa").addEventListener("change", (e)=>{
     enableSW(e.target.checked);
@@ -506,6 +633,7 @@ function init(){
   const saved = load();
   if(saved) fill(saved);
   else fill({});
+  renderHistory();
 
   // pwa toggle state
   const pwaEnabled = localStorage.getItem(LS_PWA) === "1";

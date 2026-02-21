@@ -28,11 +28,23 @@
     </div>
 
     <div class="actions">
-      <button class="btn ghost" id="btnExport" title="Exportar dados">Exportar</button>
-      <button class="btn ghost" id="btnImport" title="Importar dados">Importar</button>
+      <button class="btn ghost desktopOnly" id="btnExport" title="Exportar dados">Exportar</button>
+      <button class="btn ghost desktopOnly" id="btnImport" title="Importar dados">Importar</button>
       <input type="file" id="fileImport" accept="application/json" hidden />
-      <button class="btn ghost" id="btnReset" title="Repor formulário">Repor</button>
+      <button class="btn ghost desktopOnly" id="btnPrint" title="Imprimir / Guardar PDF">Imprimir</button>
+      <button class="btn ghost desktopOnly" id="btnReset" title="Repor formulário">Repor</button>
+
+      <!-- Mobile overflow -->
+      <button class="btn ghost mobileOnly" id="btnMenu" aria-haspopup="true" aria-expanded="false" title="Ações">Ações ▾</button>
+
       <button class="btn" id="btnCalc" title="Calcular risco">Calcular</button>
+    </div>
+
+    <div class="menu hidden" id="menuPanel" role="menu" aria-label="Ações">
+      <button class="menuItem" id="mExport" role="menuitem">Exportar</button>
+      <button class="menuItem" id="mImport" role="menuitem">Importar</button>
+      <button class="menuItem" id="mPrint" role="menuitem">Imprimir / PDF</button>
+      <button class="menuItem danger" id="mReset" role="menuitem">Repor</button>
     </div>
   </header>
 
@@ -228,6 +240,12 @@
           <h2>Resumo para registo</h2>
           <pre class="pre" id="summary">—</pre>
         </div>
+
+        <div class="card">
+          <h2>Histórico (local)</h2>
+          <div class="muted small">Guarda automaticamente os últimos 10 cálculos neste dispositivo. Não inclui identificação.</div>
+          <div class="history" id="historyList"></div>
+        </div>
       </section>
 
       <!-- EVIDENCE -->
@@ -278,6 +296,13 @@
             <div class="inline">
               <input type="checkbox" id="togglePwa" />
               <span class="muted">Permite cache offline e adicionar ao ecrã inicial</span>
+            </div>
+          </div>
+          <div class="row">
+            <label class="label">Actualizar app</label>
+            <div class="inline">
+              <button class="btn ghost" id="btnUpdateApp">Actualizar (limpar cache)</button>
+              <span class="muted small">Útil se o iPhone ficar preso a uma versão antiga.</span>
             </div>
           </div>
 
